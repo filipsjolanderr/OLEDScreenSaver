@@ -16,6 +16,7 @@ namespace OLEDScreenSaver
         private Action<string> hideFormCallback;
         private Action<string> secondStageCallback;
         private bool paused = false;
+        private DateTime? pauseEndTime = null;
         private uint firstThresholdTime = 0;
         private uint secondStageDelay = 0;
         private uint pollrate = 0;
@@ -110,6 +111,21 @@ namespace OLEDScreenSaver
                         displayedScreens.Remove(screenName);
                         secondStageScreens.Remove(screenName);
                     }
+
+                    // Auto-Resume logic
+                    if (pauseEndTime.HasValue && DateTime.Now >= pauseEndTime.Value)
+                    {
+                        LogHelper.Log("Auto-resuming screensaver after pause duration expired.");
+                        paused = false;
+                        pauseEndTime = null;
+                        foreach (var name in screenNames)
+                        {
+                            lastOledMouseActivity[name] = DateTime.Now;
+                        }
+                    }
+
+                    if (paused)
+                        return;
 
                     // Check each screen independently
                     foreach (var screenName in screenNames)
@@ -226,11 +242,19 @@ namespace OLEDScreenSaver
             }
         }
 
-        public void PauseScreensaver()
+        public void PauseScreensaver(int? minutes = null)
         {
             lock (stateLock)
             {
                 paused = true;
+                if (minutes.HasValue)
+                {
+                    pauseEndTime = DateTime.Now.AddMinutes(minutes.Value);
+                }
+                else
+                {
+                    pauseEndTime = null;
+                }
                 // Hide all displayed screens
                 var screensToHide = new List<string>(displayedScreens.Keys);
                 foreach (var screenName in screensToHide)
@@ -252,6 +276,7 @@ namespace OLEDScreenSaver
             lock (stateLock)
             {
                 paused = false;
+                pauseEndTime = null;
                 StartTimer();
                 LogHelper.Log("Screensaver resumed");
             }
@@ -297,6 +322,21 @@ namespace OLEDScreenSaver
                         secondStageScreens[screenName] = false;
                         OnCloseScreensaver(screenName);
                     }
+                }
+            }
+        }
+
+        public void ForceShowScreensaver(string screenName)
+        {
+            lock (stateLock)
+            {
+                if (lastOledMouseActivity.ContainsKey(screenName))
+                {
+                    displayedScreens[screenName] = true;
+                    secondStageScreens[screenName] = true;
+                    // Force an old timestamp so it doesn't immediately close on next tick
+                    lastOledMouseActivity[screenName] = DateTime.Now.AddDays(-1); 
+                    OnEnterSecondStage(screenName);
                 }
             }
         }

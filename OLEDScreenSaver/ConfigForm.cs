@@ -272,6 +272,7 @@ namespace OLEDScreenSaver
                 return;
             }
             RegistryHelper.SetStartup(startupCheckbox.Checked);
+
             this.DialogResult = DialogResult.Yes;
             Close();
         }

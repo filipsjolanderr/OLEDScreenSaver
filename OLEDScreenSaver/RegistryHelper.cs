@@ -25,7 +25,7 @@ namespace OLEDScreenSaver
                 SavePollRate(DEFAULT_POLL_RATE);
                 SaveDimEnabled(true);
                 SaveDimPercentage("50");
-                SaveAnimationDuration("1000");
+                SaveAnimationDuration("500");
             }
         }
 

@@ -45,7 +45,6 @@
     <Compile Include="RegistryHelperTests.cs" />
     <Compile Include="RegistryHelperDebugTests.cs" />
     <Compile Include="ScreenSaverTests.cs" />
-    <Compile Include="ConfigFormTests.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>

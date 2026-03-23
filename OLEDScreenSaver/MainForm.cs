@@ -42,6 +42,7 @@ namespace OLEDScreenSaver
 
         // Track the last global input time to detect keyboard activity
         private uint lastInputTick = 0;
+        private DateTime ignoreInputUntil = DateTime.MinValue;
 
         void MonitorOnChanged(object sender, EventArgs e)
         {
@@ -87,8 +88,14 @@ namespace OLEDScreenSaver
 
             this.menuItem1.Index = 0;
             this.menuItem1.Text = "Pause";
-            this.menuItem1.Click += new System.EventHandler(this.MenuItem1_Click);
-            this.menuItem1.Checked = false;
+            
+            var miResume = new MenuItem("Resume", MenuItem1_Click);
+            var miPause30 = new MenuItem("For 30 minutes", (s, e) => { screenSaver.PauseScreensaver(30); UpdatePauseMenu(true); });
+            var miPause60 = new MenuItem("For 1 hour", (s, e) => { screenSaver.PauseScreensaver(60); UpdatePauseMenu(true); });
+            var miPause120 = new MenuItem("For 2 hours", (s, e) => { screenSaver.PauseScreensaver(120); UpdatePauseMenu(true); });
+            var miPauseIndef = new MenuItem("Indefinitely", (s, e) => { screenSaver.PauseScreensaver(); UpdatePauseMenu(true); });
+
+            this.menuItem1.MenuItems.AddRange(new[] { miResume, miPause30, miPause60, miPause120, miPauseIndef });
 
             this.menuItem2.Index = 1;
             this.menuItem2.Text = "Config";
@@ -123,6 +130,41 @@ namespace OLEDScreenSaver
             };
             mouseActivityTimer.Tick += MouseActivityTimer_Tick;
             mouseActivityTimer.Start();
+
+            // Register Win+Shift+L as Global Hotkey
+            Win32Helper.RegisterHotKey(this.Handle, 1, Win32Helper.MOD_WIN | Win32Helper.MOD_SHIFT, (int)Keys.L);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == Win32Helper.WM_HOTKEY && m.WParam.ToInt32() == 1)
+            {
+                ToggleScreensaver();
+            }
+            base.WndProc(ref m);
+        }
+
+        private void ToggleScreensaver()
+        {
+            lock (formsLock)
+            {
+                bool allDisplayed = fullyBlackScreens.Count > 0 && oledForms.Keys.All(k => fullyBlackScreens.ContainsKey(k) && fullyBlackScreens[k]);
+                if (allDisplayed)
+                {
+                    foreach (var scr in oledForms.Keys.ToList())
+                    {
+                        screenSaver.NotifyOledMouseActivity(scr);
+                    }
+                }
+                else
+                {
+                    foreach (var scr in oledForms.Keys.ToList())
+                    {
+                        screenSaver.ForceShowScreensaver(scr);
+                    }
+                }
+            }
+            ignoreInputUntil = DateTime.Now.AddSeconds(1); // Ignore input for 1 second after hotkey
         }
 
         private void MouseActivityTimer_Tick(object sender, EventArgs e)
@@ -130,6 +172,19 @@ namespace OLEDScreenSaver
             try
             {
                 var cursorPosition = Cursor.Position;
+
+                if (DateTime.Now < ignoreInputUntil)
+                {
+                    lastMousePosition = cursorPosition;
+                    var lii = new Win32Helper.LASTINPUTINFO();
+                    lii.cbSize = (uint)Marshal.SizeOf(lii);
+                    lii.dwTime = 0;
+                    if (Win32Helper.GetLastInputInfo(ref lii))
+                    {
+                        lastInputTick = lii.dwTime;
+                    }
+                    return; // Ignore all input shortly after hotkey
+                }
 
                 // Only notify activity if mouse has moved a significant distance (prevents jitter from resetting timer)
                 var mouseMoved = false;
@@ -167,7 +222,6 @@ namespace OLEDScreenSaver
                             var isActuallyFullyBlack = isMarkedFullyBlack &&
                                                        form != null &&
                                                        !form.IsDisposed &&
-                                                       form.Visible &&
                                                        form.Opacity >= 0.95;
 
                             mouseOnFullyBlackScreen = isActuallyFullyBlack;
@@ -265,6 +319,12 @@ namespace OLEDScreenSaver
                 // Only change cursor state when it actually changes to avoid counter issues
                 if (mouseOnFullyBlackScreen && !cursorCurrentlyHidden)
                 {
+                    // Jiggle cursor by 1 pixel to force Windows to apply the OLEDForm's blank cursor
+                    var p = Cursor.Position;
+                    Cursor.Position = new Point(p.X + 1, p.Y);
+                    Cursor.Position = p;
+                    lastMousePosition = p; // Update so this artificial jiggle doesn't trigger wake-up
+
                     // Hide cursor aggressively
                     Win32Helper.HideCursor();
                     cursorCurrentlyHidden = true;
@@ -419,7 +479,8 @@ namespace OLEDScreenSaver
                     TopMost = true,
                     ShowInTaskbar = false,
                     Text = $"OLED Screen Saver - {screenName}",
-                    Opacity = 0.0 // Start invisible - will be animated when shown
+                    Opacity = 0.0, // Start invisible - will be animated when shown
+                    Cursor = new Cursor(Win32Helper.GetBlankCursor())
                 };
 
                 UpdateFormForScreen(form, screen);
@@ -501,9 +562,8 @@ namespace OLEDScreenSaver
                     {
                         if (form != null && !form.IsDisposed)
                         {
-                            form.Hide();
-                            form.SendToBack();
-                            form.TopMost = false;
+                            var duration = RegistryHelper.LoadAnimationDuration();
+                            AnimateOpacity(screenName, form, form.Opacity, 0.0, duration);
                         }
                     }
                     // Mark screen as not fully black
@@ -683,9 +743,32 @@ namespace OLEDScreenSaver
                     form.Opacity = startOpacity;
                 }
 
+                // Skip animation if duration is very short (e.g. 0 ms set in config)
+                if (durationMs <= 50)
+                {
+                    if (form.InvokeRequired)
+                    {
+                        form.Invoke(new Action(() =>
+                        {
+                            if (!form.IsDisposed)
+                            {
+                                form.Opacity = endOpacity;
+                                if (endOpacity <= 0.01) { form.Hide(); form.SendToBack(); form.TopMost = false; }
+                            }
+                        }));
+                    }
+                    else
+                    {
+                        form.Opacity = endOpacity;
+                        if (endOpacity <= 0.01) { form.Hide(); form.SendToBack(); form.TopMost = false; }
+                    }
+                    return;
+                }
+
                 // Use a simpler, more reliable animation approach
-                const int steps = 20; // 20 steps for smooth animation
-                var stepInterval = Math.Max(50, durationMs / steps); // At least 50ms per step
+                int targetSteps = 20; // Try up to 20 steps
+                var stepInterval = Math.Max(16, durationMs / targetSteps); // At least 16ms per step (60fps)
+                var steps = Math.Max(1, durationMs / stepInterval);
                 var opacityRange = endOpacity - startOpacity;
                 var stepSize = opacityRange / steps;
                 var currentStep = 0;
@@ -742,12 +825,14 @@ namespace OLEDScreenSaver
                                 if (!form.IsDisposed)
                                 {
                                     form.Opacity = endOpacity;
+                                    if (endOpacity <= 0.01) { form.Hide(); form.SendToBack(); form.TopMost = false; }
                                 }
                             }));
                         }
                         else
                         {
                             form.Opacity = endOpacity;
+                            if (endOpacity <= 0.01) { form.Hide(); form.SendToBack(); form.TopMost = false; }
                         }
 
                         animationTimer.Stop();
@@ -786,13 +871,11 @@ namespace OLEDScreenSaver
                     {
                         if (form.IsDisposed) return;
                         form.Opacity = startOpacity;
-                        form.Refresh();
                     }));
                 }
                 else
                 {
                     form.Opacity = startOpacity;
-                    form.Refresh();
                 }
             }
             catch (Exception ex)
@@ -817,20 +900,16 @@ namespace OLEDScreenSaver
             }
         }
 
+        private void UpdatePauseMenu(bool isPaused)
+        {
+            menuItem1.Checked = isPaused;
+            if (!isPaused) screenSaver.ResumeScreensaver();
+        }
+
         private void MenuItem1_Click(object Sender, EventArgs e)
         {
-            if (this.menuItem1.Checked == false)
-            {
-                screenSaver.PauseScreensaver();
-                this.menuItem1.Checked = true;
-                Console.WriteLine("Paused.");
-            }
-            else
-            {
-                screenSaver.ResumeScreensaver();
-                this.menuItem1.Checked = false;
-                Console.WriteLine("Resumed.");
-            }
+            UpdatePauseMenu(false);
+            Console.WriteLine("Resumed.");
         }
 
         private ConfigForm configFormInstance = null;
@@ -961,8 +1040,6 @@ namespace OLEDScreenSaver
                 var cp = base.CreateParams;
                 // Hide from Alt+Tab switcher
                 cp.ExStyle |= 0x80; // WS_EX_TOOLWINDOW
-                // Make window transparent to mouse input so mouse can pass through
-                cp.ExStyle |= 0x20; // WS_EX_TRANSPARENT
                 return cp;
             }
         }
@@ -989,17 +1066,6 @@ namespace OLEDScreenSaver
 
         protected override void WndProc(ref Message m)
         {
-            // Let all mouse messages pass through to underlying windows
-            // This ensures mouse movement and clicks work even when the form is visible
-            const int WM_NCHITTEST = 0x0084;
-            const int HTTRANSPARENT = -1;
-
-            if (m.Msg == WM_NCHITTEST)
-            {
-                m.Result = (IntPtr)HTTRANSPARENT;
-                return;
-            }
-
             base.WndProc(ref m);
         }
     }

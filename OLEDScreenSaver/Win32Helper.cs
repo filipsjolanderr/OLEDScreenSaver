@@ -44,7 +44,7 @@ namespace OLEDScreenSaver
         private static readonly IntPtr NULL_CURSOR = IntPtr.Zero;
         private static IntPtr blankCursor = IntPtr.Zero;
 
-        private static IntPtr GetBlankCursor()
+        public static IntPtr GetBlankCursor()
         {
             if (blankCursor == IntPtr.Zero)
             {
@@ -266,6 +266,18 @@ namespace OLEDScreenSaver
 
         [DllImport("user32.dll")]
         public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vk);
+
+        [DllImport("user32.dll")]
+        public static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+
+        public const int WM_HOTKEY = 0x0312;
+        public const int MOD_ALT = 0x0001;
+        public const int MOD_CONTROL = 0x0002;
+        public const int MOD_SHIFT = 0x0004;
+        public const int MOD_WIN = 0x0008;
 
         // Extended window styles to hide from Alt+Tab
         private const int GWL_EXSTYLE = -20;
