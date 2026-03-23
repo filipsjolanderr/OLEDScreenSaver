@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -29,8 +29,38 @@ namespace OLEDScreenSaver
         [DllImport("user32.dll")]
         private static extern int ShowCursor(bool bShow);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr SetCursor(IntPtr hCursor);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr LoadCursor(IntPtr hInstance, int lpCursorName);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr CreateCursor(IntPtr hInst, int xHotSpot, int yHotSpot, int nWidth, int nHeight, byte[] pvAndPlane, byte[] pvXorPlane);
+
+        [DllImport("user32.dll")]
+        private static extern bool DestroyCursor(IntPtr hCursor);
+
+        private static readonly IntPtr NULL_CURSOR = IntPtr.Zero;
+        private static IntPtr blankCursor = IntPtr.Zero;
+
+        private static IntPtr GetBlankCursor()
+        {
+            if (blankCursor == IntPtr.Zero)
+            {
+                // Create a 1x1 transparent cursor
+                var andMask = new byte[] { 0xFF }; // All bits set (transparent)
+                var xorMask = new byte[] { 0x00 }; // All bits clear (transparent)
+                blankCursor = CreateCursor(IntPtr.Zero, 0, 0, 1, 1, andMask, xorMask);
+            }
+            return blankCursor;
+        }
+
         internal static void ShowCursor()
         {
+            // Reset cursor to default (arrow)
+            SetCursor(LoadCursor(IntPtr.Zero, 32512)); // IDC_ARROW = 32512
+            // Also use ShowCursor to ensure it's visible
             while (ShowCursor(true) < 0)
             {
                 ShowCursor(true);
@@ -39,6 +69,13 @@ namespace OLEDScreenSaver
 
         internal static void HideCursor()
         {
+            // Method 1: Set cursor to NULL (invisible) - most reliable
+            SetCursor(NULL_CURSOR);
+            
+            // Method 2: Set to blank cursor as backup
+            SetCursor(GetBlankCursor());
+            
+            // Method 3: Also use ShowCursor to hide it (reference counter)
             while (ShowCursor(false) >= 0)
             {
                 ShowCursor(false);
@@ -197,7 +234,7 @@ namespace OLEDScreenSaver
 
         public static WINDOWPLACEMENT GetPlacement(IntPtr windowHandle)
         {
-            WINDOWPLACEMENT placement = new WINDOWPLACEMENT();
+            var placement = new WINDOWPLACEMENT();
             GetWindowPlacement(windowHandle, out placement);
 
             return placement;
@@ -226,6 +263,39 @@ namespace OLEDScreenSaver
 
         [DllImport("user32.dll")]
         public static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        // Extended window styles to hide from Alt+Tab
+        private const int GWL_EXSTYLE = -20;
+        private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_APPWINDOW = 0x00040000;
+
+        [DllImport("user32.dll")]
+        private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
+
+        [DllImport("user32.dll")]
+        private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
+
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, ShowWindowCommands nCmdShow);
+
+        /// <summary>
+        /// Hides the window from Alt+Tab switcher
+        /// </summary>
+        public static void HideFromAltTab(IntPtr hWnd)
+        {
+            var extendedStyle = GetWindowLong(hWnd, GWL_EXSTYLE);
+            SetWindowLong(hWnd, GWL_EXSTYLE, extendedStyle | WS_EX_TOOLWINDOW);
+        }
+
+        /// <summary>
+        /// Shows a window without activating it (doesn't steal focus)
+        /// </summary>
+        public static void ShowWindowNoActivate(IntPtr hWnd)
+        {
+            ShowWindow(hWnd, ShowWindowCommands.SW_SHOWNOACTIVATE);
+        }
     }
 }
-

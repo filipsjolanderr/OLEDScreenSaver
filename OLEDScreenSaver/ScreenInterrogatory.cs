@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -285,7 +285,7 @@ namespace OLEDScreenSaver
             return deviceName.monitorFriendlyDeviceName;
         }
 
-        private static IEnumerable<string> GetAllMonitorsFriendlyNames()
+        public static IEnumerable<string> GetAllMonitorsFriendlyNames()
         {
             uint pathCount, modeCount;
             var error = GetDisplayConfigBufferSizes(QUERY_DEVICE_CONFIG_FLAGS.QDC_ONLY_ACTIVE_PATHS, out pathCount, out modeCount);
@@ -309,12 +309,12 @@ namespace OLEDScreenSaver
 
         public static string DeviceFriendlyName(this Screen screen)
         {
-            var allFriendlyNames = GetAllMonitorsFriendlyNames();
+            var allFriendlyNames = GetAllMonitorsFriendlyNames().ToList();
             for (var index = 0; index < Screen.AllScreens.Length; index++)
             {
                 LogHelper.Log("Number of screen in DeviceFriendlyName is " + Screen.AllScreens.Length);
                 if (Equals(screen, Screen.AllScreens[index]))
-                    return allFriendlyNames.ToArray()[index];
+                    return index < allFriendlyNames.Count ? allFriendlyNames[index] : null;
             }
                 
             return null;

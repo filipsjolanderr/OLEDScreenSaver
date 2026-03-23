@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
@@ -17,29 +17,33 @@ namespace OLEDScreenSaver
     {
         public static Screen FindScreen(String name)
         {
-            foreach (Screen screen in Screen.AllScreens)
+            var screens = Screen.AllScreens;
+            var friendlyNames = ScreenInterrogatory.GetAllMonitorsFriendlyNames().ToList();
+            
+            for (var i = 0; i < screens.Length; i++)
             {
-                var friendly_screen_name = ScreenInterrogatory.DeviceFriendlyName(screen);
-                LogHelper.Log("Screen name " + friendly_screen_name);
-                if (friendly_screen_name == name)
+                if (i < friendlyNames.Count)
                 {
-                    return screen;
+                    if (friendlyNames[i] == name)
+                    {
+                        return screens[i];
+                    }
                 }
             }
-            LogHelper.Log("Screen name is null");
+            LogHelper.Log("Screen name was not found: " + name);
             return null;
         }
 
         public static int getNumberOfConnectedMonitors()
         {
-            int numberOfMonitors = 1;
+            var numberOfMonitors = 1;
 
             //Detect number of monitors. However, this does NOT work when no monitors are connected. It instead gives a 1.
-            ManagementObjectSearcher searcher = new ManagementObjectSearcher("root\\CIMV2", "SELECT * FROM Win32_PnPEntity where service =\"monitor\"");
+            var searcher = new ManagementObjectSearcher("root\\CIMV2", "SELECT * FROM Win32_PnPEntity where service =\"monitor\"");
             numberOfMonitors = searcher.Get().Count;
 
             //Get's the monitor's instance name. "Default_Monitor" is the "monitor" Windows defaults to when nothing is connected
-            string activeScreen = "";
+            var activeScreen = "";
             using (var wmiSearcher = new ManagementObjectSearcher("\\root\\wmi", "select * from WmiMonitorBasicDisplayParams"))
             {
                 var results = wmiSearcher.Get();
