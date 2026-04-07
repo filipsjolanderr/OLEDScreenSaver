@@ -137,6 +137,7 @@ namespace OLEDScreenSaver
             this.timeoutTrackBar.SmallChange = 2;
             this.timeoutTrackBar.LargeChange = 10;
             this.timeoutTrackBar.TickStyle = System.Windows.Forms.TickStyle.None;
+            this.timeoutTrackBar.Scroll += new System.EventHandler(this.TimeoutTrackBar_Scroll);
             // 
             // timeoutNumericUpDown
             // 
@@ -172,6 +173,7 @@ namespace OLEDScreenSaver
             this.secondStageTrackBar.SmallChange = 2;
             this.secondStageTrackBar.LargeChange = 10;
             this.secondStageTrackBar.TickStyle = System.Windows.Forms.TickStyle.None;
+            this.secondStageTrackBar.Scroll += new System.EventHandler(this.SecondStageTrackBar_Scroll);
             // 
             // secondStageNumericUpDown
             // 
@@ -205,6 +207,7 @@ namespace OLEDScreenSaver
             this.dimPercentageTrackBar.Maximum = 100;
             this.dimPercentageTrackBar.TickFrequency = 2;
             this.dimPercentageTrackBar.TickStyle = System.Windows.Forms.TickStyle.None;
+            this.dimPercentageTrackBar.Scroll += new System.EventHandler(this.DimPercentageTrackBar_Scroll);
             // 
             // dimPercentageNumericUpDown
             // 
@@ -238,6 +241,7 @@ namespace OLEDScreenSaver
             this.animationDurationTrackBar.SmallChange = 100;
             this.animationDurationTrackBar.LargeChange = 500;
             this.animationDurationTrackBar.TickStyle = System.Windows.Forms.TickStyle.None;
+            this.animationDurationTrackBar.Scroll += new System.EventHandler(this.AnimationDurationTrackBar_Scroll);
             // 
             // animationDurationNumericUpDown
             // 

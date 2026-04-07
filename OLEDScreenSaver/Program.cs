@@ -1,33 +1,55 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Threading;
 
 namespace OLEDScreenSaver
 {
     static class Program
     {
-        static Mutex mutex = new Mutex(true, "{8F6F0AC4-B9A1-45fd-A8CF-72F04E6BDE8F}");
-
-        /// <summary>
-        /// The main entry point for the application.
-        /// </summary>
         [STAThread]
         static void Main()
         {
-            if (mutex.WaitOne(TimeSpan.Zero, true))
-            {
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new MainForm());
-                mutex.ReleaseMutex();
-            }
-            else
-            {
-                MessageBox.Show("OLED Screen Saver is already running in the system tray.", "Already Running", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+
+            // Infrastructure services
+            ILogger logger = new FileLogger();
+            IScreenService screenService = new WindowsScreenService(logger);
+            ICursorService cursorService = new WindowsCursorService();
+            IWindowManager windowManager = new WindowsWindowManager();
+
+            // Set DPI awareness early
+            screenService.SetProcessDpiAware();
+
+            // Component services
+            IConfigurationRepository configRepo = new RegistryConfigurationRepository(logger);
+            IUserActivityMonitor activityMonitor = new Win32UserActivityMonitor(configRepo, logger, screenService);
+            IScreenSaverManager screenSaverManager = new ScreenSaverManager(configRepo, activityMonitor, logger, screenService);
+            
+            // Managers
+            OledFormManager oledFormManager = new OledFormManager(
+                configRepo, 
+                screenSaverManager, 
+                logger, 
+                screenService, 
+                cursorService, 
+                windowManager);
+
+            // Factory for ConfigForm to ensure it's created with fresh dependencies
+            Func<ConfigForm> configFormFactory = () => new ConfigForm(
+                configRepo, 
+                screenSaverManager, 
+                oledFormManager, 
+                logger, 
+                screenService);
+
+            // Application Context
+            TrayApplicationContext context = new TrayApplicationContext(
+                configRepo, 
+                screenSaverManager, 
+                oledFormManager, 
+                configFormFactory);
+
+            Application.Run(context);
         }
     }
 }
