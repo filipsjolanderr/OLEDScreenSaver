@@ -11,8 +11,10 @@ namespace OLEDScreenSaver
             get
             {
                 var cp = base.CreateParams;
-                // Hide from Alt+Tab switcher
-                cp.ExStyle |= 0x80; // WS_EX_TOOLWINDOW
+                int WS_EX_TOOLWINDOW = 0x80;
+                int WS_EX_TRANSPARENT = 0x20;
+                // Hide from Alt+Tab switcher and make completely click-through
+                cp.ExStyle |= WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT; 
                 return cp;
             }
         }
