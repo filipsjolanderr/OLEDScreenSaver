@@ -17,8 +17,6 @@ namespace OLEDScreenSaver
         List<string> LoadScreenNames();
         bool SaveScreenNames(List<string> screenNames);
 
-        int LoadPollRate();
-        bool SavePollRate(string pollrate);
 
         bool LoadDimEnabled();
         bool SaveDimEnabled(bool enabled);

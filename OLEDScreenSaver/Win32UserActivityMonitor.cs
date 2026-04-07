@@ -68,7 +68,7 @@ namespace OLEDScreenSaver
         {
             InstallHooks();
             
-            _fallbackTimer = new Timer { Interval = Math.Max(100, _configRepository.LoadPollRate()) };
+            _fallbackTimer = new Timer { Interval = 60000 }; // 1 minute lazy failsafe
             _fallbackTimer.Tick += FallbackTimer_Tick;
             _fallbackTimer.Start();
         }

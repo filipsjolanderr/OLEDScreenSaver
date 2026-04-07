@@ -13,7 +13,6 @@ namespace OLEDScreenSaver
         private const string DEFAULT_OLED_AWAITED_NAME = "LG TV SSCR";
         private const string DEFAULT_TIMEOUT = "5.0";
         private const string DEFAULT_SECOND_STAGE_TIMEOUT = "1.0";
-        private const string DEFAULT_POLL_RATE = "500";
 
         public RegistryConfigurationRepository(ILogger logger)
         {
@@ -28,7 +27,6 @@ namespace OLEDScreenSaver
                 
                 return key.GetValue("Timeout") != null &&
                        (key.GetValue("ScreenNames") != null || key.GetValue("ScreenName") != null) &&
-                       key.GetValue("PollRate") != null &&
                        key.GetValue("DimEnabled") != null &&
                        key.GetValue("DimPercentage") != null &&
                        key.GetValue("AnimationDuration") != null;
@@ -41,7 +39,6 @@ namespace OLEDScreenSaver
             {
                 SaveTimeout(DEFAULT_TIMEOUT);
                 SaveScreenName(DEFAULT_OLED_AWAITED_NAME);
-                SavePollRate(DEFAULT_POLL_RATE);
                 SaveDimEnabled(true);
                 SaveDimPercentage("50");
                 SaveAnimationDuration("500");
@@ -126,18 +123,6 @@ namespace OLEDScreenSaver
             return SaveValue("ScreenNames", string.Join(",", screenNames));
         }
 
-        public int LoadPollRate()
-        {
-            var raw = LoadValue("PollRate", DEFAULT_POLL_RATE);
-            if (int.TryParse(raw.ToString(), out var value)) return value;
-            return 500;
-        }
-
-        public bool SavePollRate(string pollrate)
-        {
-            if (!int.TryParse(pollrate, out _)) return false;
-            return SaveValue("PollRate", pollrate);
-        }
 
         public bool LoadDimEnabled()
         {

@@ -10,14 +10,15 @@ namespace OLEDScreenSaver
         private readonly IUserActivityMonitor _userActivityMonitor;
         private readonly ILogger _logger;
         private readonly IScreenService _screenService;
-        private System.Timers.Timer _screenSaverTimer;
+
+        private Dictionary<string, System.Timers.Timer> _timers = new Dictionary<string, System.Timers.Timer>();
+        private System.Timers.Timer _unpauseTimer = null;
 
         private bool _paused = false;
         private DateTime? _pauseEndTime = null;
 
         private uint _firstThresholdTime = 0;
         private uint _secondStageDelay = 0;
-        private uint _pollrate = 0;
 
         private readonly object _stateLock = new object();
 
@@ -57,7 +58,6 @@ namespace OLEDScreenSaver
             {
                 _firstThresholdTime = (uint)(_configRepository.LoadTimeout() * 60.0 * 1000.0);
                 _secondStageDelay = (uint)(_configRepository.LoadSecondStageTimeout() * 60.0 * 1000.0);
-                _pollrate = (uint)_configRepository.LoadPollRate();
                 _cachedScreenNames = _configRepository.LoadScreenNames();
                 _cachedDimEnabled = _configRepository.LoadDimEnabled();
 
@@ -70,13 +70,41 @@ namespace OLEDScreenSaver
                         _secondStageScreens[screenName] = false;
                     }
                 }
-
-                // If timer exists, update its interval
-                if (_screenSaverTimer != null && _screenSaverTimer.Enabled)
+                
+                // Clean up removed screens
+                var screensToRemove = _timers.Keys.Where(k => !_cachedScreenNames.Contains(k)).ToList();
+                foreach (var key in screensToRemove)
                 {
-                    _screenSaverTimer.Interval = _pollrate > 0 ? _pollrate : 500;
+                    if (_timers.TryGetValue(key, out var timer))
+                    {
+                        timer.Stop();
+                        timer.Dispose();
+                    }
+                    _timers.Remove(key);
+                    _lastActivity.Remove(key);
+                    _displayedScreens.Remove(key);
+                    _secondStageScreens.Remove(key);
+                }
+
+                foreach (var screenName in _cachedScreenNames)
+                {
+                    if (!_timers.ContainsKey(screenName))
+                    {
+                        var tmr = new System.Timers.Timer(GetInitialInterval());
+                        tmr.Elapsed += (s, e) => ScreenTimerElapsed(screenName);
+                        tmr.AutoReset = false;
+                        _timers[screenName] = tmr;
+                        
+                        if (!_paused) tmr.Start();
+                    }
                 }
             }
+        }
+
+        private double GetInitialInterval()
+        {
+            double interval = _cachedDimEnabled ? _firstThresholdTime : _secondStageDelay;
+            return interval > 0 ? interval : 500;
         }
 
         private void HandleUserActivity(object sender, UserActivityEventArgs e)
@@ -89,6 +117,15 @@ namespace OLEDScreenSaver
                     _lastActivity[screenName] = DateTime.Now;
                     _displayedScreens[screenName] = false;
                     _secondStageScreens[screenName] = false;
+                    
+                    if (!_timers.ContainsKey(screenName))
+                    {
+                        var tmr = new System.Timers.Timer(GetInitialInterval());
+                        tmr.Elapsed += (s, ev) => ScreenTimerElapsed(screenName);
+                        tmr.AutoReset = false;
+                        _timers[screenName] = tmr;
+                        if (!_paused) tmr.Start();
+                    }
                 }
                 else
                 {
@@ -98,6 +135,13 @@ namespace OLEDScreenSaver
                         _displayedScreens[screenName] = false;
                         _secondStageScreens[screenName] = false;
                         WakeScreen(screenName);
+                        
+                        if (_timers.TryGetValue(screenName, out var timer))
+                        {
+                            timer.Stop();
+                            timer.Interval = GetInitialInterval();
+                            if (!_paused) timer.Start();
+                        }
                     }
                 }
             }
@@ -107,106 +151,98 @@ namespace OLEDScreenSaver
         {
             lock (_stateLock)
             {
-                if (_screenSaverTimer != null)
+                foreach (var timer in _timers.Values)
                 {
-                    _screenSaverTimer.Stop();
-                    _screenSaverTimer.Dispose();
+                    timer.Stop();
+                    timer.Dispose();
                 }
+                _timers.Clear();
 
-                _screenSaverTimer = new System.Timers.Timer(_pollrate > 0 ? _pollrate : 500);
-                _screenSaverTimer.Elapsed += Tick;
-                _screenSaverTimer.AutoReset = true;
-                _screenSaverTimer.Enabled = true;
+                foreach (var screenName in _cachedScreenNames)
+                {
+                    var timer = new System.Timers.Timer(GetInitialInterval());
+                    timer.Elapsed += (s, e) => ScreenTimerElapsed(screenName);
+                    timer.AutoReset = false;
+                    _timers[screenName] = timer;
+                    timer.Start();
+                }
 
                 _userActivityMonitor.Start();
 
-                _logger.Log($"ScreenSaverManager timer launched with poll rate: {_pollrate}ms");
+                _logger.Log($"ScreenSaverManager launched with sliding expiration pattern");
             }
         }
 
-        private void Tick(object sender, System.Timers.ElapsedEventArgs e)
+        private void ScreenTimerElapsed(string screenName)
         {
             try
             {
                 lock (_stateLock)
                 {
-                    if (_paused)
+                    if (_paused) return;
+
+                    if (!_lastActivity.ContainsKey(screenName) || !_timers.TryGetValue(screenName, out var timer))
+                        return;
+
+                    var timeSinceActivity = (uint)(DateTime.Now - _lastActivity[screenName]).TotalMilliseconds;
+
+                    var isDisplayed = _displayedScreens.ContainsKey(screenName) && _displayedScreens[screenName];
+                    var isSecondStage = _secondStageScreens.ContainsKey(screenName) && _secondStageScreens[screenName];
+
+                    if (_cachedDimEnabled)
                     {
-                        if (_pauseEndTime.HasValue && DateTime.Now >= _pauseEndTime.Value)
+                        if (timeSinceActivity < _firstThresholdTime)
                         {
-                            _logger.Log("Auto-resuming screensaver after pause duration expired.");
-                            _paused = false;
-                            _pauseEndTime = null;
-                            foreach (var name in _cachedScreenNames)
+                            uint remaining = _firstThresholdTime - timeSinceActivity;
+                            timer.Interval = remaining > 0 ? remaining : 1;
+                            timer.Start();
+                        }
+                        else if (timeSinceActivity >= _firstThresholdTime && timeSinceActivity < (_firstThresholdTime + _secondStageDelay))
+                        {
+                            if (!isDisplayed)
                             {
-                                _lastActivity[name] = DateTime.Now;
+                                _displayedScreens[screenName] = true;
+                                _secondStageScreens[screenName] = false;
+                                DimFirstStage(screenName);
                             }
+                            
+                            uint remaining = (_firstThresholdTime + _secondStageDelay) - timeSinceActivity;
+                            timer.Interval = remaining > 0 ? remaining : 1;
+                            timer.Start();
                         }
                         else
                         {
-                            return;
+                            if (!isSecondStage)
+                            {
+                                _displayedScreens[screenName] = true;
+                                _secondStageScreens[screenName] = true;
+                                DimSecondStage(screenName);
+                            }
                         }
                     }
-
-                    // Assure all cached screens are tracked
-                    foreach (var screenName in _cachedScreenNames)
+                    else // Dim Disabled, skip to second stage
                     {
-                        if (!_lastActivity.ContainsKey(screenName))
+                        if (timeSinceActivity < _secondStageDelay)
                         {
-                            _lastActivity[screenName] = DateTime.Now;
-                            _displayedScreens[screenName] = false;
-                            _secondStageScreens[screenName] = false;
+                            uint remaining = _secondStageDelay - timeSinceActivity;
+                            timer.Interval = remaining > 0 ? remaining : 1;
+                            timer.Start();
                         }
-                    }
-
-                    // Clean up tracking for removed screens
-                    var screensToRemove = _lastActivity.Keys.Where(k => !_cachedScreenNames.Contains(k)).ToList();
-                    foreach (var screenName in screensToRemove)
-                    {
-                        _lastActivity.Remove(screenName);
-                        _displayedScreens.Remove(screenName);
-                        _secondStageScreens.Remove(screenName);
-                    }
-
-                    if (_paused) return; // double check after possible auto-resume
-
-                    // Check conditions per screen
-                    foreach (var screenName in _cachedScreenNames)
-                    {
-                        if (!_lastActivity.ContainsKey(screenName)) continue;
-
-                        var timeSinceActivity = (uint)(DateTime.Now - _lastActivity[screenName]).TotalMilliseconds;
-                        
-                        var shouldDisplayFirstStage = _cachedDimEnabled && timeSinceActivity > _firstThresholdTime && timeSinceActivity <= (_firstThresholdTime + _secondStageDelay);
-                        var shouldDisplaySecondStage = _cachedDimEnabled ? timeSinceActivity > (_firstThresholdTime + _secondStageDelay) : timeSinceActivity > _secondStageDelay;
-                        
-                        var isDisplayed = _displayedScreens.ContainsKey(screenName) && _displayedScreens[screenName];
-                        var isSecondStage = _secondStageScreens.ContainsKey(screenName) && _secondStageScreens[screenName];
-
-                        if (shouldDisplayFirstStage && !isDisplayed && !isSecondStage)
+                        else
                         {
-                            _displayedScreens[screenName] = true;
-                            _secondStageScreens[screenName] = false;
-                            DimFirstStage(screenName);
-                        }
-                        else if (!shouldDisplayFirstStage && !shouldDisplaySecondStage && isDisplayed)
-                        {
-                            _displayedScreens[screenName] = false;
-                            _secondStageScreens[screenName] = false;
-                            WakeScreen(screenName);
-                        }
-                        else if (shouldDisplaySecondStage && !isSecondStage)
-                        {
-                            _displayedScreens[screenName] = true;
-                            _secondStageScreens[screenName] = true;
-                            DimSecondStage(screenName);
+                            if (!isSecondStage)
+                            {
+                                _displayedScreens[screenName] = true;
+                                _secondStageScreens[screenName] = true;
+                                DimSecondStage(screenName);
+                            }
                         }
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger.Log($"Error in ScreenSaverManager Tick: {ex.Message}");
+                _logger.Log($"Error in ScreenSaverManager Timer Elapsed: {ex.Message}");
             }
         }
 
@@ -235,7 +271,6 @@ namespace OLEDScreenSaver
                 _paused = true;
                 _pauseEndTime = minutes.HasValue ? (DateTime?)DateTime.Now.AddMinutes(minutes.Value) : null;
                 
-                // Hide all displayed screens
                 foreach (var screenName in _displayedScreens.Keys.ToList())
                 {
                     if (_displayedScreens[screenName])
@@ -246,7 +281,24 @@ namespace OLEDScreenSaver
                     }
                 }
                 
-                if (_screenSaverTimer != null) _screenSaverTimer.Stop();
+                foreach (var timer in _timers.Values) timer.Stop();
+                
+                // Clear any existing unpause timer
+                if (_unpauseTimer != null)
+                {
+                    _unpauseTimer.Stop();
+                    _unpauseTimer.Dispose();
+                    _unpauseTimer = null;
+                }
+
+                if (minutes.HasValue && minutes.Value > 0)
+                {
+                    _unpauseTimer = new System.Timers.Timer(minutes.Value * 60 * 1000);
+                    _unpauseTimer.AutoReset = false;
+                    _unpauseTimer.Elapsed += (s, e) => Resume();
+                    _unpauseTimer.Start();
+                }
+
                 _logger.Log("Screensaver paused");
             }
         }
@@ -258,13 +310,22 @@ namespace OLEDScreenSaver
                 _paused = false;
                 _pauseEndTime = null;
                 
-                // Reset activity time so it doesn't immediately dim
+                if (_unpauseTimer != null)
+                {
+                    _unpauseTimer.Stop();
+                    _unpauseTimer.Dispose();
+                    _unpauseTimer = null;
+                }
+                
                 foreach (var screenName in _cachedScreenNames)
                 {
                     _lastActivity[screenName] = DateTime.Now;
+                    if (_timers.TryGetValue(screenName, out var timer))
+                    {
+                        timer.Interval = GetInitialInterval();
+                        timer.Start();
+                    }
                 }
-
-                if (_screenSaverTimer != null) _screenSaverTimer.Start();
                 _logger.Log("Screensaver resumed");
             }
         }
@@ -277,24 +338,30 @@ namespace OLEDScreenSaver
                 
                 if (allDisplayed)
                 {
-                    // Wake all
                     foreach (var scr in _cachedScreenNames)
                     {
                         _lastActivity[scr] = DateTime.Now;
                         _displayedScreens[scr] = false;
                         _secondStageScreens[scr] = false;
                         WakeScreen(scr);
+                        
+                        if (_timers.TryGetValue(scr, out var timer))
+                        {
+                            timer.Interval = GetInitialInterval();
+                            timer.Start();
+                        }
                     }
                 }
                 else
                 {
-                    // Force dim all
                     foreach (var scr in _cachedScreenNames)
                     {
                         _displayedScreens[scr] = true;
                         _secondStageScreens[scr] = true;
-                        _lastActivity[scr] = DateTime.Now.AddDays(-1); // Force old timestamp
+                        _lastActivity[scr] = DateTime.Now.AddDays(-1); 
                         DimSecondStage(scr);
+                        
+                        if (_timers.TryGetValue(scr, out var timer)) timer.Stop();
                     }
                 }
                 
@@ -306,11 +373,18 @@ namespace OLEDScreenSaver
         {
             lock (_stateLock)
             {
-                if (_screenSaverTimer != null)
+                foreach (var timer in _timers.Values)
                 {
-                    _screenSaverTimer.Stop();
-                    _screenSaverTimer.Dispose();
-                    _screenSaverTimer = null;
+                    timer.Stop();
+                    timer.Dispose();
+                }
+                _timers.Clear();
+
+                if (_unpauseTimer != null)
+                {
+                    _unpauseTimer.Stop();
+                    _unpauseTimer.Dispose();
+                    _unpauseTimer = null;
                 }
 
                 if (_userActivityMonitor != null)
