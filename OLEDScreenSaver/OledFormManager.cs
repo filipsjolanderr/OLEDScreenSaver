@@ -155,6 +155,7 @@ namespace OLEDScreenSaver
                         var targetOpacity = _configRepository.LoadDimPercentage() / 100.0;
                         var animationDuration = _configRepository.LoadAnimationDuration();
                         AnimateOpacity(screenName, form, form.Opacity, targetOpacity, animationDuration);
+                        ManageCursorVisibility(screenName, hide: true);
                     });
                 }
             }
